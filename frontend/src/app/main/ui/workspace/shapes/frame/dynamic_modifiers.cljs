@@ -11,6 +11,8 @@
    [app.common.geom.matrix :as gmt]
    [app.common.geom.point :as gpt]
    [app.common.geom.shapes :as gsh]
+   [app.common.types.component :as ctk]
+   [app.common.types.container :as ctn]
    [app.main.store :as st]
    [app.main.ui.workspace.viewport.utils :as vwu]
    [app.util.dom :as dom]
@@ -249,6 +251,19 @@
                 (dom/remove-attribute! node "data-old-transform")
                 (dom/remove-attribute! node "transform")))))))))
 
+(defn get-copy-shapes
+  "If one or more of the shapes is a component's main instance, find all copies
+  of the component in the same page."
+  [shapes objects]
+  (letfn [(get-copy-shapes-one [shape]
+            (let [root-shape (ctn/get-root-shape objects shape)]
+              (when (:main-instance? root-shape)
+                (ctn/get-instances objects shape))))
+
+          (pack-main-copies [shape]
+            (map #(vector shape %) (get-copy-shapes-one shape))) ]
+         (mapcat pack-main-copies shapes)))
+
 (defn use-dynamic-modifiers
   [objects node modifiers]
 
@@ -277,7 +292,43 @@
 
         prev-shapes (mf/use-var nil)
         prev-modifiers (mf/use-var nil)
-        prev-transforms (mf/use-var nil)]
+        prev-transforms (mf/use-var nil)
+
+        copy-shapes
+        (mf/use-memo
+          (mf/deps (and (d/not-empty? @prev-modifiers) (d/not-empty? modifiers)))
+          (fn []
+            (get-copy-shapes shapes objects)))
+
+        transforms
+        (mf/use-memo
+          (mf/deps objects transforms copy-shapes)
+          (fn []
+            (let [get-copy-transform
+                  (fn [[main-shape copy-shape]]
+                    (let [main-modifiers (get-in modifiers [(:id main-shape) :modifiers])
+                          main-bounds    (gsh/bounding-box main-shape)
+                          copy-bounds    (gsh/bounding-box copy-shape)
+                          delta          (gpt/subtract (gpt/point (:x copy-bounds) (:y copy-bounds))
+                                                       (gpt/point (:x main-bounds) (:y main-bounds)))
+                          copy-modifiers (let [origin (:resize-origin main-modifiers)]
+                                           (cond-> main-modifiers
+                                             (some? origin)
+                                             (assoc :resize-origin (gpt/add origin delta))))
+                          center (gsh/center-shape copy-shape)]
+                      (gsh/modifiers->transform center copy-modifiers)))]
+
+              (reduce #(assoc %1 (:id (second %2)) (get-copy-transform %2))
+                      transforms
+                      copy-shapes))))
+
+        shapes
+        (mf/use-memo
+          (mf/deps shapes copy-shapes)
+          (fn []
+            (if (seq copy-shapes)
+              (concat shapes (map second copy-shapes))
+              shapes)))]
 
     (mf/use-layout-effect
      (mf/deps transforms)

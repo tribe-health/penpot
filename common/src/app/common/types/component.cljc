@@ -9,6 +9,10 @@
 (defn instance-root?
   [shape]
   (some? (:component-id shape)))
+
+(defn instance-shape?
+  [shape]
+  (some? (:shape-ref shape)))
  
 (defn instance-of?
   [shape file-id component-id]
@@ -19,7 +23,8 @@
 
 (defn is-main-of?
   [shape-main shape-inst]
-  (and (:shape-ref shape-inst)
+  (and (not= shape-main shape-inst)
+       (:shape-ref shape-inst)
        (or (= (:shape-ref shape-inst) (:id shape-main))
            (= (:shape-ref shape-inst) (:shape-ref shape-main)))))
 
