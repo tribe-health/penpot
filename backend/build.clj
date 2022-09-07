@@ -30,7 +30,7 @@
 
 (defn compile [_]
   (b/javac
-   {:src-dirs ["dev/java"]
+   {:src-dirs ["dev"]
     :class-dir class-dir
     :basis basis
-    :javac-opts ["-source" "17" "-target" "17"]}))
+    :javac-opts ["-source" "18" "-target" "18"]}))
