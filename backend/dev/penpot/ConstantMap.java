@@ -11,94 +11,235 @@
 
 package penpot;
 
-import java.util.LinkedList;
-import java.util.Iterator;
-import java.util.UUID;
-import java.util.HashMap;
-import java.nio.ByteBuffer;
+import clojure.lang.AMapEntry;
 import clojure.lang.IFn;
-import clojure.lang.PersistentHashMap;
+import clojure.lang.IHashEq;
+import clojure.lang.IMapEntry;
+import clojure.lang.IObj;
+import clojure.lang.IPersistentCollection;
 import clojure.lang.IPersistentMap;
+import clojure.lang.ISeq;
 import clojure.lang.MapEntry;
+import clojure.lang.Murmur3;
+import clojure.lang.PersistentArrayMap;
+import clojure.lang.PersistentHashMap;
+import clojure.lang.RT;
+import clojure.lang.Util;
 
-public class ConstantMap implements Iterable {
-  public final int recordSize = 16 + 4;
-  public final IFn encodeFn;
-  public final IFn decodeFn;
+import java.nio.ByteBuffer;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.UUID;
 
-  public int pending = 0;
+public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
+  public static IFn encodeFn;
+  public static IFn decodeFn;
+  public static int RECORD_SIZE = 16 + 8;
 
-  public IPersistentMap cache = PersistentHashMap.EMPTY;
-  public IPersistentMap positions = PersistentHashMap.EMPTY;
+  public static long POSITION_MASK = 0x0000_0000_ffff_ffffL;
+
+  public IPersistentMap cache;
+  public IPersistentMap positions;
 
   public ByteBuffer blob;
   public ByteBuffer header;
   public ByteBuffer content;
+  public int pending = 0;
 
+  IPersistentMap meta = PersistentArrayMap.EMPTY;
 
-  public static ConstantMap createFromBlob(final Object encodeFn,
-                                    final Object decodeFn,
-                                    final byte[] blob) {
-    return new ConstantMap((IFn)encodeFn, (IFn)decodeFn, ByteBuffer.wrap(blob));
+  int _hasheq;
+
+  // -----------------------------------------------------------------
+  // ---- Static setters
+  // -----------------------------------------------------------------
+
+  public static void setEncodeFn(IFn f) {
+    encodeFn = f;
   }
 
-  public static ConstantMap createEmpty(Object encodeFn, Object decodeFn) {
-    var buff = ByteBuffer.allocate(4);
-    buff.putInt(0, 0);
-
-    return new ConstantMap((IFn)encodeFn, (IFn)decodeFn, buff);
+  public static void setDecodeFn(IFn f) {
+    decodeFn = f;
   }
 
-  public ConstantMap(final IFn encodeFn,
-                      final IFn decodeFn,
-                      final IPersistentMap positions,
-                      final IPersistentMap cache,
-                      final ByteBuffer blob,
-                      final ByteBuffer header,
-                      final ByteBuffer content,
-                      final int pending) {
-    this.encodeFn = encodeFn;
-    this.decodeFn = decodeFn;
-    this.cache = cache;
+  // -----------------------------------------------------------------
+  // ---- Static constructors
+  // -----------------------------------------------------------------
+
+  public static ConstantMap createFromBlob(final ByteBuffer blob) {
+    var headerSize = blob.getInt(0);
+    var header = blob.slice(4, headerSize);
+    var content = blob.slice(headerSize+4, blob.remaining() - (headerSize+4));
+
+    var nitems = header.remaining() / RECORD_SIZE;
+    IPersistentMap positions = PersistentHashMap.EMPTY;
+
+    for (int i=0; i<nitems; i++) {
+      var hbuff = header.slice(i*RECORD_SIZE, RECORD_SIZE);
+      var msb = hbuff.getLong();
+      var lsb = hbuff.getLong();
+      var met = hbuff.getLong();
+      positions = positions.assoc(new UUID(msb, lsb), met);
+    }
+
+    return new ConstantMap((IPersistentMap)positions,
+                           (IPersistentMap)PersistentHashMap.EMPTY,
+                           blob,
+                           header,
+                           content,
+                           0);
+  }
+
+  public static ConstantMap createFromBlob(final byte[] buff) {
+    return createFromBlob(ByteBuffer.wrap(buff));
+  }
+
+  public static ConstantMap createEmpty() {
+    var blob = ByteBuffer.allocate(4);
+    blob.putInt(0, 0);
+    return createFromBlob(blob);
+  }
+
+  // -----------------------------------------------------------------
+  // ---- Constructors
+  // -----------------------------------------------------------------
+
+  public ConstantMap(final IPersistentMap positions,
+                     final IPersistentMap cache,
+                     final ByteBuffer blob,
+                     final ByteBuffer header,
+                     final ByteBuffer content,
+                     final int pending) {
     this.positions = positions;
+    this.cache = cache;
     this.blob = blob;
     this.header = header;
     this.content = content;
     this.pending = pending;
   }
 
-  public ConstantMap(final IFn encodeFn,
-                      final IFn decodeFn,
-                      final ByteBuffer blob) {
+  private ConstantMap newInstance() {
+    return new ConstantMap(this.positions,
+                           this.cache,
+                           this.blob,
+                           this.header,
+                           this.content,
+                           this.pending);
+  }
 
-    this.encodeFn = encodeFn;
-    this.decodeFn = decodeFn;
-    this.blob = blob;
+  // -----------------------------------------------------------------
+  // ---- IObj
+  // -----------------------------------------------------------------
 
-    var headerSize = blob.getInt(0);
-    header = blob.slice(4, headerSize);
-    content = blob.slice(headerSize+4, blob.remaining() - (headerSize+4));
+  public IPersistentMap meta() {
+    return this.meta;
+  }
 
-    var nitems = header.remaining() / recordSize;
+  public IObj withMeta(IPersistentMap meta) {
+    var instance = this.newInstance();
+    instance.meta = meta;
+    return instance;
+  }
 
-    for (int i=0; i<nitems; i++) {
-      var hbuff = header.slice(i*recordSize, recordSize);
-      var msb = hbuff.getLong();
-      var lsb = hbuff.getLong();
-      var met = hbuff.getLong();
-      positions = positions.assoc(new UUID(msb, lsb), met);
+  // -----------------------------------------------------------------
+  // ---- IPersistentMap
+  // -----------------------------------------------------------------
+
+  @Override
+  public IPersistentMap assoc(Object key, Object val) {
+    return this.set((UUID) key, val);
+  }
+
+  public IPersistentMap assocEx(Object key, Object val) {
+    throw UnsupportedOperationException("method not implemented");
+  }
+  
+  @Override
+  public IPersistentMap without(Object key) {
+    return new ConstantMap(this.positions.withiut(key),
+                           this.cache.without(key),
+                           this.blob,
+                           this.header,
+                           this.content,
+                           this.pending + 1);
+  }
+
+  // --- Associative
+
+  public boolean containsKey(Object key) {
+    return this.positions.containsKey(key);
+  }
+
+  public IMapEntry entryAt(Object key) {
+    return new LazyMapEntry(this, key);
+  }
+
+  // --- ILookup
+
+  public Object valAt(Object key) {
+    return this.get((UUID) key);
+  }
+
+  public Object valAt(Object key, Object notFound) {
+    if (this.positions.containsKey(key)) {
+      return this.get((UUID) key);
+    } else {
+      return notFound;
     }
   }
 
+  // --- Counted
+
+  public int count() {
+    return this.positions.count();
+  }
+
+  // --- Seqable
+
+  public ISeq seq() {
+    return RT.chunkIteratorSeq(this);
+  }
+
+  // --- IPersistentCollection
+
+  public IPersistentCollection cons(Object o) {
+    var entry = (MapEntry) o;
+    return this.assoc(entry.key(), entry.val());
+  }
+
+  public IPersistentCollection empty() {
+    return createEmpty();
+  }
+
+  public boolean equiv(Object o) {
+  }
+
+  // --- IHashEq
+
+  public int hasheq() {
+    if (this._hasheq == 0) {
+      this._hasheq = Murmur3.hashUnordered(this);
+    }
+
+    return this._hasheq;
+  }
+
+  public int hashCode() {
+    return this.hasheq();
+  }
+
+  // -----------------------------------------------------------------
+  // ---- OTHER
+  // -----------------------------------------------------------------
+
   public ConstantMap set(final UUID key, final Object val) {
-    return new ConstantMap(encodeFn,
-                           decodeFn,
-                           positions.assoc(key, -1L),
-                           cache.assoc(key, val),
-                           blob,
-                           header,
-                           content,
-                           pending + 1);
+    return new ConstantMap(this.positions.assoc(key, -1L),
+                           this.cache.assoc(key, val),
+                           this.blob,
+                           this.header,
+                           this.content,
+                           this.pending + 1);
   }
 
   public Object get(final UUID key) {
@@ -107,13 +248,13 @@ public class ConstantMap implements Iterable {
     }
 
     if (positions.containsKey(key)) {
-      long met = (long) positions.valAt(key);
+      var met = (long) positions.valAt(key);
       var size = (int) (met >>> 32);
-      var pos  = (int) (met & 0x0000_ffffL);
+      var pos  = (int) (met & POSITION_MASK);
 
       int cnt = 0;
-      var bbuff = new byte[size];
-      content.get(pos, bbuff, 0, size);
+      var bbuff = new byte[size-4];
+      content.get(pos+4, bbuff, 0, size-4);
 
       var val = this.decodeFn.invoke(bbuff);
       this.cache = this.cache.assoc(key, val);
@@ -124,8 +265,18 @@ public class ConstantMap implements Iterable {
     return null;
   }
 
+  int getHashEq(Object key) {
+    if (cache.containsKey(key)) {
+      return ((IHashEq)cache.valAt(key)).hasheq();
+    } else {
+      var met = (long) positions.valAt(key);
+      var pos = (int) (met & POSITION_MASK);
+      return this.content.getInt(pos);
+    }
+  }
+
   public Iterator iterator() {
-    return new ConstantMapIterator(this);
+    return new LazyMapIterator(this);
   }
 
   public byte[] toBlob() {
@@ -138,10 +289,12 @@ public class ConstantMap implements Iterable {
       return;
     }
 
+    // Calculate the total of elements and serialize the new ones
     int contentSize = 0;
     int contentElements = 0;
 
     var newItems = new HashMap<UUID, byte[]>(this.cache.count());
+    var newHashes = new HashMap<UUID, int>(this.cache.count());
 
     for (Object entry: positions) {
       var mentry = (MapEntry) entry;
@@ -157,59 +310,71 @@ public class ConstantMap implements Iterable {
         var oval = cache.valAt(key);
         var bval = (byte[]) encodeFn.invoke(oval);
         contentSize += bval.length;
+
         newItems.put((UUID) key, bval);
+        newHashes.put((UUID) key, Util.hasheq(oval));
       }
     }
 
-    var headerSize = contentElements * recordSize;
+    var headerSize = contentElements * RECORD_SIZE;
+
     var buff = ByteBuffer.allocate(headerSize + contentSize + 4);
     var header = buff.slice(4, headerSize);
     var content = buff.slice(headerSize+4, contentSize);
 
+    buff.putInt(0, headerSize);
+
     long position = 0;
+
+    var tmpRecordBuffer = ByteBuffer.allocate(RECORD_SIZE);
 
     for (Object entry: positions) {
       var mentry = (MapEntry) entry;
+      var met    = (long) (mentry.val());
+      var key    = (UUID) (mentry.key());
 
-      var met = (long) (mentry.val());
-      var key = (UUID) (mentry.key());
+      tmpRecordBuffer.putLong(key.getMostSignificantBits());
+      tmpRecordBuffer.putLong(key.getLeastSignificantBits());
 
       // this means we just copy the object to new location
       if (met != -1L) {
-        var hbuff = ByteBuffer.allocate(recordSize);
-        hbuff.putLong(key.getMostSignificantBits());
-        hbuff.putLong(key.getLeastSignificantBits());
-
         int size = (int)(met >>> 32);
-        int pos  = (int)(met & 0xffff);
+        int prevPos = (int)(met & 0xffff_ffff);
 
-        met = (met & 0xffff_0000L) | (position & 0x0000_ffffL);
+        met = (met & 0xffff_ffff_0000_0000L) | (position & 0x0000_0000_ffff_ffffL);
 
-        hbuff.putLong(met);
+        tmpRecordBuffer.putLong(met);
+
         positions = positions.assoc(key, met);
         position += (long)size;
 
-        header.put(hbuff);
-        content.put(this.content.slice(pos, size));
+        header.put(tmpRecordBuffer.rewind());
+        content.put(this.content.slice(prevPos, size));
 
       } else {
         byte[] bval = newItems.get(key);
-        int size = bval.length;
+        int hval = newHashes.get(key);
+        int size = bval.length + 4;
 
-        var hbuff = ByteBuffer.allocate(recordSize);
-        hbuff.putLong(key.getMostSignificantBits());
-        hbuff.putLong(key.getLeastSignificantBits());
+        met = (((long)size << 32) & 0xffff_ffff_0000_0000L) | (position & 0x0000_0000_ffff_ffffL);
 
-        met = (((long)size << 32) & 0xffff_0000L) | (position & 0x0000_ffffL);
-        hbuff.putLong(met);
+        tmpRecordBuffer.putLong(met);
 
         positions = positions.assoc(key, met);
         position += (long) size;
 
-        header.put(hbuff);
+        header.put(tmpRecordBuffer.rewind());
+
+        content.putInt(hval);
         content.put(bval, 0, size);
       }
+
+      tmpRecordBuffer.clear();
     }
+
+    header.rewind();
+    content.rewind();
+    buff.rewind();
 
     this.pending = 0;
     this.blob = buff;
@@ -217,23 +382,52 @@ public class ConstantMap implements Iterable {
     this.content = content;
   }
 
-  public class ConstantMapIterator implements Iterator {
-    final Iterator iterator;
-    final ConstantMap data;
+  public class LazyMapEntry extends AMapEntry implements IHashEq {
+    final Object _key;
+    final ConstantMap _cmap;
 
-    public ConstantMapIterator(final ConstantMap data) {
-      this.iterator = data.positions.iterator();
-      this.data = data;
+    public LazyMapEntry(ConstantMap cmap, Object key) {
+      this._cmap = cmap;
+      this._key = key;
+    }
+
+    public Object key() {
+      return this._key;
+    }
+
+    public Object val() {
+      return this._cmap.valAt(this._key);
+    }
+
+    public Object getKey() {
+      return this.key();
+    }
+
+    public Object getVal() {
+      return this.val();
+    }
+
+    public int hasheq() {
+      return this._cmap.getHashEq(this._key);
+    }
+  }
+
+  public class LazyMapIterator implements Iterator {
+    final Iterator _iterator;
+    final ConstantMap _cmap;
+
+    public LazyMapIterator(final ConstantMap cmap) {
+      this._iterator = cmap.positions.iterator();
+      this._cmap = cmap;
     }
 
     public boolean hasNext() {
-      return this.iterator.hasNext();
+      return this._iterator.hasNext();
     }
 
     public Object next() {
-      var entry = (MapEntry) this.iterator.next();
-      var key = (UUID) entry.key();
-      return new MapEntry(key, data.get(key));
+      var entry = (MapEntry) this._iterator.next();
+      return new LazyMapEntry(this._cmap, entry.key());
     }
   }
 }
