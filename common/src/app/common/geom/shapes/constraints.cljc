@@ -101,27 +101,25 @@
       {})))
 
 (defmethod constraint-modifier :scale
-  [_ axis _ _ modifiers _]
+  [_ axis parent _ modifiers transformed-parent-rect]
   (let [{:keys [resize-vector resize-vector-2 displacement]} modifiers]
-    (cond-> {}
-      (and (some? resize-vector)
-           (not= (axis resize-vector) 1))
-      (assoc :resize-origin (:resize-origin modifiers)
-             :resize-vector (if (= :x axis)
-                              (gpt/point (:x resize-vector) 1)
-                              (gpt/point 1 (:y resize-vector))))
+    (let [parent-rect (:selrect parent)
+          delta-start (get-delta-start axis parent-rect transformed-parent-rect)]
+      (cond-> {}
+        (and (some? resize-vector)
+             (not= (axis resize-vector) 1))
+        (assoc :resize-origin (:resize-origin modifiers)
+               :resize-vector (if (= :x axis)
+                                (gpt/point (:x resize-vector) 1)
+                                (gpt/point 1 (:y resize-vector))))
 
-      (and (= :y axis) (some? resize-vector-2)
-           (not (mth/close? (:y resize-vector-2) 1)))
-      (assoc :resize-origin (:resize-origin-2 modifiers)
-             :resize-vector (gpt/point 1 (:y resize-vector-2)))
+        (and (= :y axis) (some? resize-vector-2)
+             (not (mth/close? (:y resize-vector-2) 1)))
+        (assoc :resize-origin (:resize-origin-2 modifiers)
+               :resize-vector (gpt/point 1 (:y resize-vector-2)))
 
-      (some? displacement)
-      (assoc :displacement
-             (get-displacement axis (-> (gpt/point 0 0)
-                                        (gpt/transform displacement)
-                                        (gpt/transform (:resize-transform-inverse modifiers (gmt/matrix)))
-                                        axis))))))
+        (not (mth/almost-zero? delta-start))
+        (assoc :displacement-after (get-displacement axis delta-start))))))
 
 (defmethod constraint-modifier :default [_ _ _ _ _]
   {})
@@ -197,8 +195,15 @@
       ;; Build final child modifiers. Apply transform again to the result, to get the
       ;; real modifiers that need to be applied to the child, including rotation as needed.
       (cond-> {}
-        (some? (:displacement-after modifiers))
-        (assoc :displacement-after (:displacement-after modifiers))
+        ;;(some? (:displacement-after modifiers))
+        ;;(assoc :displacement-after (:displacement-after modifiers))
+
+        (or (contains? modifiers-h :displacement-after)
+            (contains? modifiers-v :displacement-after))
+        (assoc :displacement-after (cond-> (gpt/point (get-in modifiers-h [:displacement-after :x] 0)
+                                                       (get-in modifiers-v [:displacement-after :y] 0))
+                                      :always
+                                      (gmt/translate-matrix)))
 
         (or (contains? modifiers-h :displacement)
             (contains? modifiers-v :displacement))
