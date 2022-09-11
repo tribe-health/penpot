@@ -25,6 +25,7 @@ import clojure.lang.PersistentArrayMap;
 import clojure.lang.PersistentHashMap;
 import clojure.lang.RT;
 import clojure.lang.Util;
+// import java.lang.UnsupportedOperationException
 
 import java.nio.ByteBuffer;
 import java.util.HashMap;
@@ -38,6 +39,7 @@ public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
   public static int RECORD_SIZE = 16 + 8;
 
   public static long POSITION_MASK = 0x0000_0000_ffff_ffffL;
+  public static long SIZE_MASK = 0xffff_ffff_0000_0000L;
 
   public IPersistentMap cache;
   public IPersistentMap positions;
@@ -55,13 +57,12 @@ public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
   // ---- Static setters
   // -----------------------------------------------------------------
 
-  public static void setEncodeFn(IFn f) {
-    encodeFn = f;
+  public static void setup(IFn encode, IFn decode) {
+    encodeFn = encode;
+    decodeFn = decode;
   }
 
-  public static void setDecodeFn(IFn f) {
-    decodeFn = f;
-  }
+  public static ConstantMap EMPTY = createEmpty();
 
   // -----------------------------------------------------------------
   // ---- Static constructors
@@ -77,10 +78,10 @@ public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
 
     for (int i=0; i<nitems; i++) {
       var hbuff = header.slice(i*RECORD_SIZE, RECORD_SIZE);
-      var msb = hbuff.getLong();
-      var lsb = hbuff.getLong();
-      var met = hbuff.getLong();
-      positions = positions.assoc(new UUID(msb, lsb), met);
+      var ra = hbuff.getLong();
+      var rb = hbuff.getLong();
+      var rc = hbuff.getLong();
+      positions = positions.assoc(new UUID(ra, rb), rc);
     }
 
     return new ConstantMap((IPersistentMap)positions,
@@ -152,12 +153,12 @@ public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
   }
 
   public IPersistentMap assocEx(Object key, Object val) {
-    throw UnsupportedOperationException("method not implemented");
+    throw new UnsupportedOperationException("method not implemented");
   }
-  
+
   @Override
   public IPersistentMap without(Object key) {
-    return new ConstantMap(this.positions.withiut(key),
+    return new ConstantMap(this.positions.without(key),
                            this.cache.without(key),
                            this.blob,
                            this.header,
@@ -198,7 +199,7 @@ public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
   // --- Seqable
 
   public ISeq seq() {
-    return RT.chunkIteratorSeq(this);
+    return RT.chunkIteratorSeq(this.iterator());
   }
 
   // --- IPersistentCollection
@@ -213,11 +214,14 @@ public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
   }
 
   public boolean equiv(Object o) {
+    System.out.println("call: equiv");
+    return this == o;
   }
 
   // --- IHashEq
 
   public int hasheq() {
+    System.out.println("call: hasheq");
     if (this._hasheq == 0) {
       this._hasheq = Murmur3.hashUnordered(this);
     }
@@ -226,6 +230,7 @@ public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
   }
 
   public int hashCode() {
+    System.out.println("call: hashCode");
     return this.hasheq();
   }
 
@@ -248,15 +253,14 @@ public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
     }
 
     if (positions.containsKey(key)) {
-      var met = (long) positions.valAt(key);
-      var size = (int) (met >>> 32);
-      var pos  = (int) (met & POSITION_MASK);
+      var rc   = (long) positions.valAt(key);
+      var size = (int) (rc >>> 32);
+      var pos  = (int) (rc & POSITION_MASK);
 
-      int cnt = 0;
-      var bbuff = new byte[size-4];
-      content.get(pos+4, bbuff, 0, size-4);
+      var tmpBuff = new byte[size-4];
+      content.get(pos+4, tmpBuff, 0, size-4);
 
-      var val = this.decodeFn.invoke(bbuff);
+      var val = this.decodeFn.invoke(tmpBuff);
       this.cache = this.cache.assoc(key, val);
       return val;
     }
@@ -269,9 +273,8 @@ public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
     if (cache.containsKey(key)) {
       return ((IHashEq)cache.valAt(key)).hasheq();
     } else {
-      var met = (long) positions.valAt(key);
-      var pos = (int) (met & POSITION_MASK);
-      return this.content.getInt(pos);
+      var pos = positions.valAt(key) & POSITION_MASK;
+      return this.content.getInt((int) pos);
     }
   }
 
@@ -294,17 +297,17 @@ public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
     int contentElements = 0;
 
     var newItems = new HashMap<UUID, byte[]>(this.cache.count());
-    var newHashes = new HashMap<UUID, int>(this.cache.count());
+    var newHashes = new HashMap<UUID, Integer>(this.cache.count());
 
     for (Object entry: positions) {
       var mentry = (MapEntry) entry;
       var key = mentry.key();
-      var met = (long) mentry.val();
+      var rc = (long) mentry.val();
 
       contentElements++;
 
-      if (met != -1L) {
-        var size = (int) (met >>> 32);
+      if (rc != -1L) {
+        var size = (int) (rc >>> 32);
         contentSize += size;
       } else {
         var oval = cache.valAt(key);
@@ -324,29 +327,29 @@ public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
 
     buff.putInt(0, headerSize);
 
-    long position = 0;
+    int position = 0;
 
     var tmpRecordBuffer = ByteBuffer.allocate(RECORD_SIZE);
 
     for (Object entry: positions) {
       var mentry = (MapEntry) entry;
-      var met    = (long) (mentry.val());
+      var rc    = (long) (mentry.val());
       var key    = (UUID) (mentry.key());
 
       tmpRecordBuffer.putLong(key.getMostSignificantBits());
       tmpRecordBuffer.putLong(key.getLeastSignificantBits());
 
       // this means we just copy the object to new location
-      if (met != -1L) {
-        int size = (int)(met >>> 32);
-        int prevPos = (int)(met & 0xffff_ffff);
+      if (rc != -1L) {
+        int size = (int)(rc >>> 32L);
+        int prevPos = (int)(rc & 0xffff_ffffL);
 
-        met = (met & 0xffff_ffff_0000_0000L) | (position & 0x0000_0000_ffff_ffffL);
+        rc = this.encodeRcWithPosition(rc, position);
 
-        tmpRecordBuffer.putLong(met);
+        tmpRecordBuffer.putLong(rc);
 
-        positions = positions.assoc(key, met);
-        position += (long)size;
+        positions = positions.assoc(key, rc);
+        position += size;
 
         header.put(tmpRecordBuffer.rewind());
         content.put(this.content.slice(prevPos, size));
@@ -356,17 +359,17 @@ public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
         int hval = newHashes.get(key);
         int size = bval.length + 4;
 
-        met = (((long)size << 32) & 0xffff_ffff_0000_0000L) | (position & 0x0000_0000_ffff_ffffL);
+        rc = this.encodeRc(size, position);
+        tmpRecordBuffer.putLong(rc);
 
-        tmpRecordBuffer.putLong(met);
+        positions = positions.assoc(key, rc);
+        position += size;
 
-        positions = positions.assoc(key, met);
-        position += (long) size;
-
-        header.put(tmpRecordBuffer.rewind());
+        tmpRecordBuffer.rewind();
+        header.put(tmpRecordBuffer);
 
         content.putInt(hval);
-        content.put(bval, 0, size);
+        content.put(bval, 0, size - 4);
       }
 
       tmpRecordBuffer.clear();
@@ -380,6 +383,14 @@ public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
     this.blob = buff;
     this.header = header;
     this.content = content;
+  }
+
+  private long encodeRc(int size, int position) {
+    return (((long)size << 32) & SIZE_MASK) | (position & POSITION_MASK);
+  }
+
+  private long encodeRcWithPosition(long rc, int position) {
+    return (rc & SIZE_MASK) | ((long)position & POSITION_MASK);
   }
 
   public class LazyMapEntry extends AMapEntry implements IHashEq {
@@ -403,7 +414,7 @@ public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
       return this.key();
     }
 
-    public Object getVal() {
+    public Object getValue() {
       return this.val();
     }
 

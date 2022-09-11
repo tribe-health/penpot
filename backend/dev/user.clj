@@ -237,9 +237,10 @@
                                 index))))))
 
 
+(penpot.ConstantMap/setup blob/encode blob/decode);
+
 (def test1
   (delay
-    (let [obj1 (penpot.ConstantMap/createEmpty blob/encode blob/decode)
-          obj2 (.set obj1 (uuid/custom 0 1) {:foo 1})
-          obj3 (.set obj2 (uuid/custom 0 2) {:bar 1})]
-      obj3)))
+    (-> penpot.ConstantMap/EMPTY
+        (assoc (uuid/custom 0 1) {:foo 1})
+        (assoc (uuid/custom 0 2) {:bar 1}))))
