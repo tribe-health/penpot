@@ -53,6 +53,14 @@ public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
 
   int _hasheq;
 
+
+  public static record HeaderTuple (UUID id, int position, int size) {
+    public HeaderTuple(long ra, long rb, long rc) {
+      this(new UUID(ra, rb), (rc >>> 32), (rc & POSITION_MASK));
+    }
+  }
+
+
   // -----------------------------------------------------------------
   // ---- Static setters
   // -----------------------------------------------------------------
