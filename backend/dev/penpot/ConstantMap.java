@@ -33,7 +33,7 @@ import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.UUID;
 
-public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
+public class ConstantMap implements Iterable, Cloneable, IObj, IPersistentMap, IHashEq {
   public static IFn encodeFn;
   public static IFn decodeFn;
   public static int RECORD_SIZE = 16 + 8;
@@ -52,14 +52,6 @@ public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
   IPersistentMap meta = PersistentArrayMap.EMPTY;
 
   int _hasheq;
-
-
-  public static record HeaderTuple (UUID id, int position, int size) {
-    public HeaderTuple(long ra, long rb, long rc) {
-      this(new UUID(ra, rb), (rc >>> 32), (rc & POSITION_MASK));
-    }
-  }
-
 
   // -----------------------------------------------------------------
   // ---- Static setters
@@ -128,7 +120,8 @@ public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
     this.pending = pending;
   }
 
-  private ConstantMap newInstance() {
+  @Override
+  public ConstantMap clone() {
     return new ConstantMap(this.positions,
                            this.cache,
                            this.blob,
@@ -146,7 +139,7 @@ public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
   }
 
   public IObj withMeta(IPersistentMap meta) {
-    var instance = this.newInstance();
+    var instance = this.clone();
     instance.meta = meta;
     return instance;
   }
@@ -262,8 +255,8 @@ public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
 
     if (positions.containsKey(key)) {
       var rc   = (long) positions.valAt(key);
-      var size = (int) (rc >>> 32);
-      var pos  = (int) (rc & POSITION_MASK);
+      var size = this.getSizeFromRc(rc);
+      var pos  = this.getPositionFromRc(rc);
 
       var tmpBuff = new byte[size-4];
       content.get(pos+4, tmpBuff, 0, size-4);
@@ -281,8 +274,10 @@ public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
     if (cache.containsKey(key)) {
       return ((IHashEq)cache.valAt(key)).hasheq();
     } else {
-      var pos = positions.valAt(key) & POSITION_MASK;
-      return this.content.getInt((int) pos);
+      long rc = (long) this.positions.valAt(key);
+      int pos = this.getPositionFromRc(rc);
+
+      return this.content.getInt(pos);
     }
   }
 
@@ -293,6 +288,23 @@ public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
   public byte[] toBlob() {
     this.compact();
     return blob.array();
+  }
+
+
+  private long encodeRc(int size, int position) {
+    return (((long)size << 32) & SIZE_MASK) | (position & POSITION_MASK);
+  }
+
+  private long updateRcWithPosition(long rc, int position) {
+    return (rc & SIZE_MASK) | ((long)position & POSITION_MASK);
+  }
+
+  private int getSizeFromRc(long rc) {
+    return (int) (rc >>> 32L);
+  }
+
+  private int getPositionFromRc(long rc) {
+    return (int) (rc & POSITION_MASK);
   }
 
   public void compact() {
@@ -315,12 +327,12 @@ public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
       contentElements++;
 
       if (rc != -1L) {
-        var size = (int) (rc >>> 32);
+        var size = this.getSizeFromRc(rc);
         contentSize += size;
       } else {
         var oval = cache.valAt(key);
         var bval = (byte[]) encodeFn.invoke(oval);
-        contentSize += bval.length;
+        contentSize += (bval.length + 4);
 
         newItems.put((UUID) key, bval);
         newHashes.put((UUID) key, Util.hasheq(oval));
@@ -328,7 +340,6 @@ public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
     }
 
     var headerSize = contentElements * RECORD_SIZE;
-
     var buff = ByteBuffer.allocate(headerSize + contentSize + 4);
     var header = buff.slice(4, headerSize);
     var content = buff.slice(headerSize+4, contentSize);
@@ -341,18 +352,24 @@ public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
 
     for (Object entry: positions) {
       var mentry = (MapEntry) entry;
-      var rc    = (long) (mentry.val());
+      var rc     = (long) (mentry.val());
       var key    = (UUID) (mentry.key());
 
       tmpRecordBuffer.putLong(key.getMostSignificantBits());
       tmpRecordBuffer.putLong(key.getLeastSignificantBits());
 
+      System.out.println("=====");
+      System.out.println(key.toString());
+      System.out.println(Long.toString(rc));
+      System.out.println(rc != -1L);
+      System.out.println("=====");
+
       // this means we just copy the object to new location
       if (rc != -1L) {
-        int size = (int)(rc >>> 32L);
-        int prevPos = (int)(rc & 0xffff_ffffL);
+        int size = this.getSizeFromRc(rc);
+        int prevPos = this.getPositionFromRc(rc);
 
-        rc = this.encodeRcWithPosition(rc, position);
+        rc = this.updateRcWithPosition(rc, position);
 
         tmpRecordBuffer.putLong(rc);
 
@@ -391,14 +408,6 @@ public class ConstantMap implements Iterable, IObj, IPersistentMap, IHashEq {
     this.blob = buff;
     this.header = header;
     this.content = content;
-  }
-
-  private long encodeRc(int size, int position) {
-    return (((long)size << 32) & SIZE_MASK) | (position & POSITION_MASK);
-  }
-
-  private long encodeRcWithPosition(long rc, int position) {
-    return (rc & SIZE_MASK) | ((long)position & POSITION_MASK);
   }
 
   public class LazyMapEntry extends AMapEntry implements IHashEq {
