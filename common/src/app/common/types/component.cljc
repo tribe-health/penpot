@@ -43,3 +43,13 @@
   (and (some? (:component-id shape))
        (= (:component-file shape) library-id)))
 
+(defn set-touched-group
+  "Add a group to the touched flags."
+  [touched group]
+  (conj (or touched #{}) group))
+
+(defn touched-group?
+  "Check if the touched flags contain the given group."
+  [shape group]
+  ((or (:touched shape) #{}) group))
+

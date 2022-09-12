@@ -253,16 +253,19 @@
 
 (defn get-copy-shapes
   "If one or more of the shapes is a component's main instance, find all copies
-  of the component in the same page."
+  of the component in the same page. Ignore copies that have the geometry values
+  touched."
   [shapes objects]
   (letfn [(get-copy-shapes-one [shape]
             (let [root-shape (ctn/get-root-shape objects shape)]
               (when (:main-instance? root-shape)
-                (ctn/get-instances objects shape))))
+                (->> (ctn/get-instances objects shape)
+                     (filter #(not (ctk/touched-group? % :geometry-group)))))))
 
           (pack-main-copies [shape]
-            (map #(vector shape %) (get-copy-shapes-one shape))) ]
-         (mapcat pack-main-copies shapes)))
+            (map #(vector shape %) (get-copy-shapes-one shape)))]
+
+    (mapcat pack-main-copies shapes)))
 
 (defn use-dynamic-modifiers
   [objects node modifiers]

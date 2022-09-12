@@ -809,7 +809,7 @@
                                                         :shapes all-parents}))
         changes' (reduce del-obj-change changes' new-shapes)]
 
-    (if (and (cph/touched-group? parent-shape :shapes-group) omit-touched?)
+    (if (and (ctk/touched-group? parent-shape :shapes-group) omit-touched?)
       changes
       changes')))
 
@@ -930,7 +930,7 @@
                          changes'
                          (map :id children))]
 
-    (if (and (cph/touched-group? parent :shapes-group) omit-touched?)
+    (if (and (ctk/touched-group? parent :shapes-group) omit-touched?)
       changes
       changes')))
 
@@ -961,7 +961,7 @@
                                                         :index index-before
                                                         :ignore-touched true})))]
 
-    (if (and (cph/touched-group? parent :shapes-group) omit-touched?)
+    (if (and (ctk/touched-group? parent :shapes-group) omit-touched?)
       changes
       changes')))
 
