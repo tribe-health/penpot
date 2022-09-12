@@ -311,11 +311,23 @@
                           copy-bounds    (gsh/bounding-box copy-shape)
                           delta          (gpt/subtract (gpt/point (:x copy-bounds) (:y copy-bounds))
                                                        (gpt/point (:x main-bounds) (:y main-bounds)))
-                          copy-modifiers (let [origin (:resize-origin main-modifiers)]
+                          copy-modifiers (let [origin   (:resize-origin main-modifiers)
+                                               origin-2 (:resize-origin-2 main-modifiers)]
                                            (cond-> main-modifiers
                                              (some? origin)
-                                             (assoc :resize-origin (gpt/add origin delta))))
+                                             (assoc :resize-origin (gpt/add origin delta))
+                                             (some? origin-2)
+                                             (assoc :resize-origin-2 (gpt/add origin-2 delta))))
                           center (gsh/center-shape copy-shape)]
+                      ;; (js/console.log "----------------------")
+                      ;; (js/console.log "delta" (clj->js delta))
+                      ;; (js/console.log "main-modifiers" (clj->js main-modifiers))
+                      ;; (js/console.log "main-transform" (str (gsh/modifiers->transform
+                      ;;                                         (gsh/center-shape main-shape)
+                      ;;                                         main-modifiers)))
+                      ;; (js/console.log "copy-modifiers" (clj->js copy-modifiers))
+                      ;; (js/console.log "copy-transform" (str (gsh/modifiers->transform
+                      ;;                                         center copy-modifiers)))
                       (gsh/modifiers->transform center copy-modifiers)))]
 
               (reduce #(assoc %1 (:id (second %2)) (get-copy-transform %2))
