@@ -92,7 +92,7 @@ public class ConstantMap implements Iterable, Cloneable, IObj, IPersistentMap, I
                            0);
   }
 
-  public static ConstantMap createFromBlob(final byte[] buff) {
+  public static ConstantMap createFromByteArray(final byte[] buff) {
     return createFromBlob(ByteBuffer.wrap(buff));
   }
 
@@ -285,11 +285,10 @@ public class ConstantMap implements Iterable, Cloneable, IObj, IPersistentMap, I
     return new LazyMapIterator(this);
   }
 
-  public byte[] toBlob() {
+  public byte[] toByteArray() {
     this.compact();
     return blob.array();
   }
-
 
   private long encodeRc(int size, int position) {
     return (((long)size << 32) & SIZE_MASK) | (position & POSITION_MASK);

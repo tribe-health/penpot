@@ -17,6 +17,7 @@
    java.io.ByteArrayOutputStream
    java.time.Instant
    java.time.OffsetDateTime
+   penpot.ConstantMap
    org.fressian.Reader
    org.fressian.StreamingWriter
    org.fressian.Writer
@@ -81,6 +82,14 @@
       (write [_ w o]
         (.writeTag ^Writer w "penpot/point" 1)
         (.writeList ^Writer w (java.util.List/of (.-x ^Point o) (.-y ^Point o)))))}
+
+
+   penpot.ConstantMap
+   {"penpot/constant-map"
+    (reify WriteHandler
+      (write [_ w o]
+        (.writeTag ^Writer w "penpot/constant-map" 1)
+        (.writeBytes ^Writer w ^bytes (.toByteArray ^ConstantMap o))))}
 
    app.common.geom.matrix.Matrix
    {"penpot/matrix"
