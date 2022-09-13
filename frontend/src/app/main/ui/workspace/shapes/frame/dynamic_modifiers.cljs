@@ -252,9 +252,8 @@
                 (dom/remove-attribute! node "transform")))))))))
 
 (defn get-copy-shapes
-  "If one or more of the shapes is a component's main instance, find all copies
-  of the component in the same page. Ignore copies that have the geometry values
-  touched."
+  "If one or more of the shapes is a component's main instance, find all copies of
+  the component in the same page. Ignore copies with the geometry values touched."
   [shapes objects]
   (letfn [(get-copy-shapes-one [shape]
             (let [root-shape (ctn/get-root-shape objects shape)]
@@ -307,30 +306,70 @@
         (mf/use-memo
           (mf/deps objects transforms copy-shapes)
           (fn []
-            (let [get-copy-transform
+            (let [translate1
+                  (fn [shape modifiers]
+                    (let [root-shape     (ctn/get-root-shape objects shape)
+                          root-pos       (gsh/orig-pos root-shape)
+
+                          modified-shape (gsh/apply-modifiers shape modifiers)
+                          modified-pos   (gsh/orig-pos modified-shape)]
+                      (js/console.log "root-pos" (clj->js root-pos))
+                      (js/console.log "modified-pos" (clj->js modified-pos))
+                      (if (or (< (:x modified-pos) (:x root-pos))
+                              (< (:y modified-pos) (:y root-pos)))
+                        (let [displacement (get modifiers :displacement (gmt/matrix))
+                              delta        (gpt/point (max 0 (- (:x root-pos) (:x modified-pos)))
+                                                      (max 0 (- (:y root-pos) (:y modified-pos))))]
+                          [(assoc modifiers :displacement
+                                  (gmt/add-translate displacement
+                                                     (gmt/translate-matrix delta)))
+                           delta])
+                        [modifiers (gpt/point 0 0)])))
+
+                  get-copy-transform
                   (fn [[main-shape copy-shape]]
-                    (let [main-modifiers (get-in modifiers [(:id main-shape) :modifiers])
+                    (js/console.log "----------------------")
+                    (js/console.log "main-shape" (clj->js main-shape))
+                    (js/console.log "copy-shape" (clj->js copy-shape))
+                    (let [[main-modifiers deltaa] (->> (get-in modifiers [(:id main-shape) :modifiers])
+                                                      (translate1 main-shape))
+
                           main-bounds    (gsh/bounding-box main-shape)
-                          copy-bounds    (gsh/bounding-box copy-shape)
+                          copy-bounds    (gpt/add (gpt/point
+                                                    (:x (gsh/bounding-box copy-shape))
+                                                    (:y (gsh/bounding-box copy-shape)))
+                                                        deltaa)
                           delta          (gpt/subtract (gpt/point (:x copy-bounds) (:y copy-bounds))
                                                        (gpt/point (:x main-bounds) (:y main-bounds)))
+
+                          ;; root-shape     (ctn/get-root-shape objects copy-shape)
+                          ;; root-pos       (gsh/orig-pos root-shape)
+                          ;; copy-pos       (gsh/orig-pos copy-shape)
+
+                          ;; Move the modifier origin points to the position of the copy.
                           copy-modifiers (let [origin   (:resize-origin main-modifiers)
                                                origin-2 (:resize-origin-2 main-modifiers)]
                                            (cond-> main-modifiers
                                              (some? origin)
                                              (assoc :resize-origin (gpt/add origin delta))
+
                                              (some? origin-2)
-                                             (assoc :resize-origin-2 (gpt/add origin-2 delta))))
+                                             (assoc :resize-origin-2 (gpt/add origin-2 delta))
+
+                                             ;; (gpt/close? root-pos copy-pos)
+                                             ;; (dissoc :displacement)
+                                             ))
+
                           center (gsh/center-shape copy-shape)]
-                      ;; (js/console.log "----------------------")
+
                       ;; (js/console.log "delta" (clj->js delta))
-                      ;; (js/console.log "main-modifiers" (clj->js main-modifiers))
-                      ;; (js/console.log "main-transform" (str (gsh/modifiers->transform
-                      ;;                                         (gsh/center-shape main-shape)
-                      ;;                                         main-modifiers)))
-                      ;; (js/console.log "copy-modifiers" (clj->js copy-modifiers))
-                      ;; (js/console.log "copy-transform" (str (gsh/modifiers->transform
-                      ;;                                         center copy-modifiers)))
+                      (js/console.log "main-modifiers" (clj->js main-modifiers))
+                      (js/console.log "main-transform" (str (gsh/modifiers->transform
+                                                              (gsh/center-shape main-shape)
+                                                              main-modifiers)))
+                      (js/console.log "copy-modifiers" (clj->js copy-modifiers))
+                      (js/console.log "copy-transform" (str (gsh/modifiers->transform
+                                                              center copy-modifiers)))
                       (gsh/modifiers->transform center copy-modifiers)))]
 
               (reduce #(assoc %1 (:id (second %2)) (get-copy-transform %2))
