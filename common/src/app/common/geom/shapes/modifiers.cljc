@@ -25,6 +25,31 @@
    modif-tree
    ids))
 
+(defn merge-mod2
+  [old-modifiers new-modifiers]
+
+  (let [result
+        (cond-> old-modifiers
+          (not (gtr/empty-modifiers? new-modifiers))
+          (merge old-modifiers new-modifiers)
+
+          (and (some? (:resize-vector old-modifiers))
+               (some? (:resize-vector new-modifiers)))
+          (assoc
+           :resize-origin (:resize-origin old-modifiers)
+           :resize-vector (:resize-vector old-modifiers)
+           :resize-transform (:resize-transform old-modifiers)
+           :resize-transform-inverse (:resize-transform-inverse old-modifiers)
+
+           ;; TODO: Esto puede ser peligroso porque ahora solo se utiliza en el eje-y ¿habria que hacer un resize-3?
+           ;; O cambiar todo por una lista de transformaciones
+           :resize-origin-2 (:resize-origin new-modifiers)
+           :resize-vector-2 (:resize-vector new-modifiers)            
+           )
+          )]
+    result
+    ))
+
 (defn set-pixel-precision
   "Adjust modifiers so they adjust to the pixel grid"
   [modifiers shape]
@@ -123,12 +148,13 @@
                   result
                   (cond-> modif-tree
                     (not (gtr/empty-modifiers? child-modifiers))
-                    (update-in [(:id child) :modifiers] #(merge child-modifiers %)))
+                    (update-in [(:id child) :modifiers] #(merge-mod2 child-modifiers %))
+                    #_(update-in [(:id child) :modifiers] #(merge child-modifiers %)))
 
-                  ;;_ (.log js/console ">>>" (:name child))
-                  ;;_ (.log js/console "  >" (clj->js child-modifiers))
-                  ;;_ (.log js/console "  >" (clj->js (get-in modif-tree [(:id child) :modifiers])))
-                  ;;_ (.log js/console "  >" (clj->js (get-in result [(:id child) :modifiers])))
+                  _ (.log js/console ">>>" (:name child))
+                  _ (.log js/console "  >" (clj->js child-modifiers))
+                  _ (.log js/console "  >" (clj->js (get-in modif-tree [(:id child) :modifiers])))
+                  _ (.log js/console "  >" (clj->js (get-in result [(:id child) :modifiers])))
                   ]
               result
               ))
@@ -243,6 +269,7 @@
         (recur (:id parent) result)))))
 
 (defn resolve-tree-sequence
+  ;; TODO: Esta ahora puesto al zero pero tiene que mirar todas las raices
   "Given the ids that have changed search for layout roots to recalculate"
   [ids objects]
   (->> (tree-seq
@@ -261,6 +288,21 @@
         (map #(get-first-layout % objects))
         ids))
 
+(defn inside-layout?
+  [objects shape]
+
+  (loop [current-id (:id shape)]
+    (let [current (get objects current-id)]
+      (cond
+        (or (nil? current) (= current-id (:parent-id current)))
+        false
+
+        (= :frame (:type current))
+        (:layout current)
+
+        :else
+        (recur (:parent-id current))))))
+
 (defn set-objects-modifiers
   [ids objects get-modifier ignore-constraints snap-pixel?]
 
@@ -278,14 +320,17 @@
               (fn [modif-tree shape]
                 (let [has-modifiers? (some? (get-in modif-tree [(:id shape) :modifiers]))
                       is-layout? (layout? shape)
-                      is-parent? (or (group? shape) (and (frame? shape) (not (layout? shape))))]
+                      is-parent? (or (group? shape) (and (frame? shape) (not (layout? shape))))
+
+                      ;; If the current child is inside the layout we ignore the constraints
+                      is-inside-layout? (inside-layout? objects shape)]
 
                   (cond-> modif-tree
                     is-layout?
                     (set-layout-modifiers objects shape ignore-constraints snap-pixel?)
 
                     (and has-modifiers? is-parent?)
-                    (set-children-modifiers objects shape ignore-constraints snap-pixel?))))
+                    (set-children-modifiers objects shape (or ignore-constraints is-inside-layout?) snap-pixel?))))
 
               modif-tree))]
 

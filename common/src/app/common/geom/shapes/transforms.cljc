@@ -498,7 +498,6 @@
                     (gpt/point (normalize-scale (:x resize-v2))
                                (normalize-scale (:y resize-v2))))
 
-
          resize-transform (:resize-transform modifiers)
          resize-transform-inverse (:resize-transform-inverse modifiers)
 
