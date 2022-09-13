@@ -184,6 +184,12 @@
        (let [^bytes bibytes (.readObject rdr)]
          (bigint (BigInteger. bibytes)))))
 
+   "penpot/constant-map"
+   (reify ReadHandler
+     (read [_ rdr _ _]
+       (let [^bytes data (.readObject rdr)]
+         (ConstantMap/createFromByteArray data))))
+
    "byte"
    (reify ReadHandler
      (read [_ rdr _ _]

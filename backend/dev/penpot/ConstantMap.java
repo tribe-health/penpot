@@ -47,7 +47,9 @@ public class ConstantMap implements Iterable, Cloneable, IObj, IPersistentMap, I
   public ByteBuffer blob;
   public ByteBuffer header;
   public ByteBuffer content;
+
   public int pending = 0;
+  public boolean initialized = false;
 
   IPersistentMap meta = PersistentArrayMap.EMPTY;
 
@@ -68,38 +70,14 @@ public class ConstantMap implements Iterable, Cloneable, IObj, IPersistentMap, I
   // ---- Static constructors
   // -----------------------------------------------------------------
 
-  public static ConstantMap createFromBlob(final ByteBuffer blob) {
-    var headerSize = blob.getInt(0);
-    var header = blob.slice(4, headerSize);
-    var content = blob.slice(headerSize+4, blob.remaining() - (headerSize+4));
-
-    var nitems = header.remaining() / RECORD_SIZE;
-    IPersistentMap positions = PersistentHashMap.EMPTY;
-
-    for (int i=0; i<nitems; i++) {
-      var hbuff = header.slice(i*RECORD_SIZE, RECORD_SIZE);
-      var ra = hbuff.getLong();
-      var rb = hbuff.getLong();
-      var rc = hbuff.getLong();
-      positions = positions.assoc(new UUID(ra, rb), rc);
-    }
-
-    return new ConstantMap((IPersistentMap)positions,
-                           (IPersistentMap)PersistentHashMap.EMPTY,
-                           blob,
-                           header,
-                           content,
-                           0);
-  }
-
   public static ConstantMap createFromByteArray(final byte[] buff) {
-    return createFromBlob(ByteBuffer.wrap(buff));
+    return new ConstantMap(ByteBuffer.wrap(buff));
   }
 
   public static ConstantMap createEmpty() {
     var blob = ByteBuffer.allocate(4);
     blob.putInt(0, 0);
-    return createFromBlob(blob);
+    return new ConstantMap(blob);
   }
 
   // -----------------------------------------------------------------
@@ -118,16 +96,52 @@ public class ConstantMap implements Iterable, Cloneable, IObj, IPersistentMap, I
     this.header = header;
     this.content = content;
     this.pending = pending;
+    this.initialized = true;
+  }
+
+  public ConstantMap(final ByteBuffer blob) {
+    this.blob = blob;
+    this.initialized = false;
+  }
+
+  private void initialize() {
+    if (this.initialized) return;
+
+    var headerSize = this.blob.getInt(0);
+    var header = this.blob.slice(4, headerSize);
+    var content = this.blob.slice(headerSize+4, blob.remaining() - (headerSize+4));
+
+    var nitems = header.remaining() / RECORD_SIZE;
+    IPersistentMap positions = PersistentHashMap.EMPTY;
+
+    for (int i=0; i<nitems; i++) {
+      var hbuff = header.slice(i*RECORD_SIZE, RECORD_SIZE);
+      var ra = hbuff.getLong();
+      var rb = hbuff.getLong();
+      var rc = hbuff.getLong();
+      positions = positions.assoc(new UUID(ra, rb), rc);
+    }
+
+    this.positions = positions;
+    this.cache = PersistentHashMap.EMPTY;
+    this.header = header;
+    this.content = content;
+    this.pending = 0;
+    this.initialized = true;
   }
 
   @Override
   public ConstantMap clone() {
-    return new ConstantMap(this.positions,
-                           this.cache,
-                           this.blob,
-                           this.header,
-                           this.content,
-                           this.pending);
+    if (this.initialized) {
+      return new ConstantMap(this.positions,
+                             this.cache,
+                             this.blob,
+                             this.header,
+                             this.content,
+                             this.pending);
+    } else {
+      return new ConstantMap(this.blob);
+    }
   }
 
   // -----------------------------------------------------------------
@@ -159,6 +173,7 @@ public class ConstantMap implements Iterable, Cloneable, IObj, IPersistentMap, I
 
   @Override
   public IPersistentMap without(Object key) {
+    this.initialize();
     return new ConstantMap(this.positions.without(key),
                            this.cache.without(key),
                            this.blob,
@@ -170,10 +185,12 @@ public class ConstantMap implements Iterable, Cloneable, IObj, IPersistentMap, I
   // --- Associative
 
   public boolean containsKey(Object key) {
+    this.initialize();
     return this.positions.containsKey(key);
   }
 
   public IMapEntry entryAt(Object key) {
+    this.initialize();
     return new LazyMapEntry(this, key);
   }
 
@@ -184,6 +201,7 @@ public class ConstantMap implements Iterable, Cloneable, IObj, IPersistentMap, I
   }
 
   public Object valAt(Object key, Object notFound) {
+    this.initialize();
     if (this.positions.containsKey(key)) {
       return this.get((UUID) key);
     } else {
@@ -194,18 +212,21 @@ public class ConstantMap implements Iterable, Cloneable, IObj, IPersistentMap, I
   // --- Counted
 
   public int count() {
+    this.initialize();
     return this.positions.count();
   }
 
   // --- Seqable
 
   public ISeq seq() {
+    this.initialize();
     return RT.chunkIteratorSeq(this.iterator());
   }
 
   // --- IPersistentCollection
 
   public IPersistentCollection cons(Object o) {
+    this.initialize();
     var entry = (MapEntry) o;
     return this.assoc(entry.key(), entry.val());
   }
@@ -215,14 +236,14 @@ public class ConstantMap implements Iterable, Cloneable, IObj, IPersistentMap, I
   }
 
   public boolean equiv(Object o) {
-    System.out.println("call: equiv");
+    // System.out.println("call: equiv");
     return this == o;
   }
 
   // --- IHashEq
 
   public int hasheq() {
-    System.out.println("call: hasheq");
+    // System.out.println("call: hasheq");
     if (this._hasheq == 0) {
       this._hasheq = Murmur3.hashUnordered(this);
     }
@@ -231,7 +252,7 @@ public class ConstantMap implements Iterable, Cloneable, IObj, IPersistentMap, I
   }
 
   public int hashCode() {
-    System.out.println("call: hashCode");
+    // System.out.println("call: hashCode");
     return this.hasheq();
   }
 
@@ -239,7 +260,21 @@ public class ConstantMap implements Iterable, Cloneable, IObj, IPersistentMap, I
   // ---- OTHER
   // -----------------------------------------------------------------
 
+  public void forceModified() {
+    for (Object entry: positions) {
+      var mentry = (MapEntry) entry;
+      var key    = (UUID) (mentry.key());
+      var val    = this.get(key);
+
+      this.positions = this.positions.assoc(key, -1L);
+      this.cache = this.cache.assoc(key, val);
+    }
+
+    this.pending = 1;
+  }
+
   public ConstantMap set(final UUID key, final Object val) {
+    this.initialize();
     return new ConstantMap(this.positions.assoc(key, -1L),
                            this.cache.assoc(key, val),
                            this.blob,
@@ -357,11 +392,11 @@ public class ConstantMap implements Iterable, Cloneable, IObj, IPersistentMap, I
       tmpRecordBuffer.putLong(key.getMostSignificantBits());
       tmpRecordBuffer.putLong(key.getLeastSignificantBits());
 
-      System.out.println("=====");
-      System.out.println(key.toString());
-      System.out.println(Long.toString(rc));
-      System.out.println(rc != -1L);
-      System.out.println("=====");
+      // System.out.println("=====");
+      // System.out.println(key.toString());
+      // System.out.println(Long.toString(rc));
+      // System.out.println(rc != -1L);
+      // System.out.println("=====");
 
       // this means we just copy the object to new location
       if (rc != -1L) {

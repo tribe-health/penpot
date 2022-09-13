@@ -236,11 +236,31 @@
                                 {}
                                 index))))))
 
+(penpot.ConstantMap/setup fres/encode fres/decode);
 
-(penpot.ConstantMap/setup blob/encode blob/decode);
+(def file-data-1
+  (delay (blob/encode (:data @file-as-is))))
 
-(def test1
-  (delay
-    (-> penpot.ConstantMap/EMPTY
-        (assoc (uuid/custom 0 1) {:foo 1})
-        (assoc (uuid/custom 0 2) {:bar 1}))))
+(def file-data-2
+  (delay (-> (:data @file-as-is)
+             (update :pages-index #(into penpot.ConstantMap/EMPTY %))
+             (update :components #(into penpot.ConstantMap/EMPTY %))
+             (blob/encode))))
+
+(def big-page-as-is
+  (delay (get-in @file-as-is [:data :pages-index #uuid "9e179070-2036-11ec-8c0e-ffeb22ac69b2"])))
+
+(def big-page-1
+  (delay (-> @big-page-as-is
+             (fres/encode))))
+
+(def big-page-2
+  (delay (-> @big-page-as-is
+             (update :objects #(into penpot.ConstantMap/EMPTY %))
+             (fres/encode))))
+
+;; (def test1
+;;   (delay
+;;     (-> penpot.ConstantMap/EMPTY
+;;         (assoc (uuid/custom 0 1) {:foo 1})
+;;         (assoc (uuid/custom 0 2) {:bar 1}))))
