@@ -12,6 +12,7 @@
    [app.common.geom.point :as gpt]
    [app.common.geom.shapes :as gsh]
    [app.common.math :as mth]
+   [app.common.pages.helpers :as cph] ; TODO: move this to ctst
    [app.common.types.component :as ctk]
    [app.common.types.container :as ctn]
    [app.main.store :as st]
@@ -327,20 +328,35 @@
 
                           center (gsh/center-shape copy-shape)]
 
-                      (assoc transforms (:id copy-shape) (gsh/modifiers->transform center copy-modifiers))))
+                      (update transforms (:id copy-shape)
+                              #(let [transform (or % (gmt/matrix))]
+                                 (gmt/multiply transform
+                                               (gsh/modifiers->transform center copy-modifiers))))))
+
+                  apply-delta
+                  (fn [transforms shape-id delta]
+                    (let [shape-ids (-> (cph/get-children-ids objects shape-id)
+                                        (conj shape-id))
+
+                          add-delta (fn [transform]
+                                      (let [transform (or transform (gmt/matrix))]
+                                        (gmt/multiply transform (gmt/translate-matrix delta))))]
+
+                      (reduce #(update %1 %2 add-delta)
+                              transforms
+                              shape-ids)))
 
                   manage-root
                   (fn [transforms main-shape copy-shape]
                     (let [main-modifiers (get-in modifiers [(:id main-shape) :modifiers])
-                          modified-main (gsh/apply-modifiers main-shape main-modifiers)
+                          modified-main  (gsh/apply-modifiers main-shape main-modifiers)
 
-                          displacement (gpt/subtract (gsh/orig-pos main-shape)
-                                                     (gsh/orig-pos modified-main))]
+                          delta          (gpt/subtract (gsh/orig-pos main-shape)
+                                                       (gsh/orig-pos modified-main))]
 
                       (cond-> transforms
-                        (not (gpt/almost-zero? displacement))
-                        ; TODO: añadir un desplazamiento delta al root y a todos sus hijos
-                        identity)))
+                        (not (gpt/almost-zero? delta))
+                        (apply-delta (:id copy-shape) delta))))
 
                   manage-nonroot
                   (fn [transforms main-shape copy-shape]
@@ -351,12 +367,16 @@
 
                   add-all-transforms
                   (fn [transforms [main-shape copy-shape]]
+                    (js/console.log "----------------------")
+                    (js/console.log "main-shape" (clj->js main-shape))
+                    (js/console.log "copy-shape" (clj->js copy-shape))
                     (as-> transforms $
                       (add-copy-transforms $ main-shape copy-shape)
                       (if (ctk/instance-root? main-shape)
                         (manage-root $ main-shape copy-shape)
                         (manage-nonroot $ main-shape copy-shape))))]
 
+              (js/console.log "==================")
               (reduce add-all-transforms
                       transforms
                       copy-shapes))))
